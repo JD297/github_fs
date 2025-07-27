@@ -1,8 +1,8 @@
 .POSIX:
 
-CC            = cc
-CFLAGS        = -Wall -Wextra -Wpedantic -g -I/usr/local/include
-LDFLAGS       = -L/usr/local/lib -lfuse -lcurl -ljson-c
+CC            = c++
+CFLAGS        = -Wall -Wextra -Wpedantic -g -I/usr/local/include -Iinclude
+LDFLAGS       = -L/usr/local/lib -lfuse -lcurl
 
 TARGET        = github_fs
 PREFIX        = /usr/local
@@ -13,15 +13,23 @@ BUILDDIR      = build
 
 OBJFILES      = $(BUILDDIR)/github_fs.o
 
-HEADERS       =
+HEADERS       = include/nlohmann/json.hpp
 
 $(BUILDDIR)/$(TARGET): $(OBJFILES)
 	$(CC) -o $@ $(OBJFILES) $(LDFLAGS)
 
-$(BUILDDIR)/github_fs.o: $(HEADERS) $(SRCDIR)/github_fs.c
-	$(CC) $(CFLAGS) -c -o $@ $(SRCDIR)/github_fs.c
+$(BUILDDIR)/github_fs.o: $(HEADERS) $(SRCDIR)/github_fs.cpp
+	$(CC) $(CFLAGS) -c -o $@ $(SRCDIR)/github_fs.cpp
+
+$(BUILDDIR)/json-nlohmann.o: include/nlohmann/json.hpp
+	$(CC) -c include/nlohmann/json.hpp -o $@
+
+include/nlohmann/json.hpp:
+	mkdir -p include/nlohmann
+	ftp -o include/nlohmann/json.hpp https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp
 
 clean:
+	rm -rf include/nlohmann
 	rm -f $(BUILDDIR)/*
 
 install: $(BUILDDIR)/$(TARGET)
