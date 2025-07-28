@@ -185,7 +185,7 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 	if (gfp.repo.empty()) {
 		std::shared_ptr<github_fs::fs_node> fs_user_node = (*fs_root_node->nodes)[std::string(gfp.user)];
 
-	if (fs_user_node.use_count() <= 0) {
+		if (fs_user_node.use_count() <= 0) {
 			fs_user_node = std::make_shared<github_fs::fs_node>();
 		
 			std::cout << std::endl << "CACHE LOOKUP FAILED | USER: " << path << std::endl;
@@ -230,14 +230,13 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 		std::shared_ptr<github_fs::fs_node> fs_user_node = (*fs_root_node->nodes)[std::string(gfp.user)];
 		std::shared_ptr<github_fs::fs_node> fs_repo_node = (*fs_user_node->nodes)[std::string(gfp.repo)];
 
-		//if (fs_repo_node.use_count() <= 0) {
-		//	fs_repo_node = std::make_shared<github_fs::fs_node>();
 		if (fs_repo_node->st->st_nlink == 0) {
 			std::cout << std::endl << "CACHE LOOKUP FAILED | REPO: " << path << std::endl;
 
 			github_fs::api::response res = github_api_repos_branches(gfp);
 
 			if (res.code >= 300) {
+				std::cout  << std::endl << "API ERROR USER: [" << res.code << "]" << std::endl;
 				return -ENOENT;
 			}
 
@@ -257,7 +256,7 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 			(*fs_repo_node->nodes)["."] = fs_repo_node;
 			(*fs_repo_node->nodes)[".."] = fs_user_node;
 
-			// (*fs_user_node->nodes)[std::string(gfp.repo)] = fs_repo_node;
+			(*fs_user_node->nodes)[std::string(gfp.repo)] = fs_repo_node;
 		} else {
 			std::cout << std::endl << "CACHE LOOKUP HIT | REPO: " << path << std::endl;
 		}
@@ -273,14 +272,14 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 		std::shared_ptr<github_fs::fs_node> fs_repo_node = (*fs_user_node->nodes)[std::string(gfp.repo)];
 		std::shared_ptr<github_fs::fs_node> fs_branch_node = (*fs_repo_node->nodes)[std::string(gfp.branch)];
 
-		//if (fs_branch_node.use_count() <= 0) {
-		//	fs_branch_node = std::make_shared<github_fs::fs_node>();
 		if (fs_branch_node->st->st_nlink == 0) {
-			std::cout << std::endl << "CACHE LOOKUP FAILED | REPO: " << path << std::endl;
+			std::cout << std::endl << "CACHE LOOKUP FAILED | BRANCH: " << path << std::endl;
 
 			github_fs::api::response res = github_api_repos_contents(gfp);
 
 			if (res.code >= 300) {
+				std::cout  << std::endl << "API ERROR USER: [" << res.code << "]" << std::endl;
+			
 				return -ENOENT;
 			}
 
@@ -291,17 +290,15 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 
 				std::shared_ptr<github_fs::fs_node> fs_file_node = std::make_shared<github_fs::fs_node>();
 
-				/*
+				
 				if ((item["type"].get_ref<const std::string&>()).compare("file") == 0) {
+					std::cout << std::endl << "FILE: " << item["name"].get_ref<const std::string&>() << std::endl;
+					
 					fs_file_node->st->st_mode = S_IFREG | 0444;
 					fs_file_node->st->st_blksize = 512;
 					fs_file_node->st->st_nlink = 1;
-					//fs_file_node->st->st_size = item["size"].get<off_t>();
-
-					(*fs_branch_node->nodes)["."] = fs_branch_node;
-					(*fs_branch_node->nodes)[".."] = fs_repo_node;
+					//fs_file_node->st->st_size = item["size"].get<off_t>(); // TODO
 				}
-				*/
 
 				(*fs_branch_node->nodes)[item["name"].get_ref<const std::string&>()] = fs_file_node;
 			}
@@ -314,12 +311,79 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 			(*fs_branch_node->nodes)["."] = fs_branch_node;
 			(*fs_branch_node->nodes)[".."] = fs_repo_node;
 
-			(*fs_repo_node->nodes)[std::string(gfp.repo)] = fs_branch_node;
+			(*fs_repo_node->nodes)[std::string(gfp.branch)] = fs_branch_node;
 		} else {
-			std::cout << std::endl << "CACHE LOOKUP HIT | REPO: " << path << std::endl;
+			std::cout << std::endl << "CACHE LOOKUP HIT | BRANCH: " << path << std::endl;
 		}
 
 		*node = fs_branch_node;
+
+		return 0;
+	}
+
+	/* PATH */
+	if (!gfp.path.empty()) {
+		std::shared_ptr<github_fs::fs_node> fs_user_node = (*fs_root_node->nodes)[std::string(gfp.user)];
+		std::shared_ptr<github_fs::fs_node> fs_repo_node = (*fs_user_node->nodes)[std::string(gfp.repo)];
+		std::shared_ptr<github_fs::fs_node> fs_branch_node = (*fs_repo_node->nodes)[std::string(gfp.branch)];
+
+		std::shared_ptr<github_fs::fs_node> fs_previous_path_node = fs_branch_node;
+		std::shared_ptr<github_fs::fs_node> fs_path_node;
+
+		std::filesystem::path path(gfp.path);
+
+		for (auto part = path.begin(); part != path.end();) {
+			fs_path_node = (*fs_previous_path_node->nodes)[part->string()];
+
+			if (++part != path.end()) {
+				fs_previous_path_node = fs_path_node;
+			}
+		}
+
+		if (fs_path_node->st->st_nlink == 0) {
+			std::cout << std::endl << "CACHE LOOKUP FAILED | PATH: " << path << std::endl;
+
+			github_fs::api::response res = github_api_repos_contents(gfp);
+
+			if (res.code >= 300) {
+				std::cout  << std::endl << "API ERROR PATH: [" << res.code << "]" << std::endl;
+			
+				return -ENOENT;
+			}
+
+			size_t links = 0;
+
+			for (const auto& item : res.json) {
+				++links;
+
+				std::shared_ptr<github_fs::fs_node> fs_file_node = std::make_shared<github_fs::fs_node>();
+
+				if ((item["type"].get_ref<const std::string&>()).compare("file") == 0) {
+					std::cout << std::endl << "FILE: " << item["name"].get_ref<const std::string&>() << std::endl;
+					
+					fs_file_node->st->st_mode = S_IFREG | 0444;
+					fs_file_node->st->st_blksize = 512;
+					fs_file_node->st->st_nlink = 1;
+					//fs_file_node->st->st_size = item["size"].get<off_t>(); // TODO
+				}
+
+				(*fs_path_node->nodes)[item["name"].get_ref<const std::string&>()] = fs_file_node;
+			}
+
+			fs_path_node->st->st_mode = S_IFDIR | 0555;
+			fs_path_node->st->st_blksize = 512;
+			fs_path_node->st->st_nlink = 2 + links;
+			fs_path_node->st->st_size = 4096; // TODO WORKAROUND
+
+			(*fs_path_node->nodes)["."] = fs_path_node;
+			(*fs_path_node->nodes)[".."] = fs_previous_path_node;
+
+			(*fs_previous_path_node->nodes)[path.filename().string()] = fs_path_node;
+		} else {
+			std::cout << std::endl << "CACHE LOOKUP HIT | PATH: " << path << std::endl;
+		}
+
+		*node = fs_path_node;
 
 		return 0;
 	}
@@ -350,7 +414,6 @@ int fs_readdir(const char *path, void *data, fuse_fill_dir_t filler, off_t off, 
 	}
 
 	for (auto it = node->nodes->begin(); it != node->nodes->end(); ++it) {
-		std::cout << std::endl << "FILL" << std::endl;
 		filler(data, it->first.c_str(), &(*it->second->st), 0);
 	}
 
@@ -360,10 +423,6 @@ int fs_readdir(const char *path, void *data, fuse_fill_dir_t filler, off_t off, 
 int fs_getattr(const char *path, struct stat *st)
 {
 	github_fs_path gfp(path);
-
-	printf("\nDEBUG: fs_getattr: %s\n", path);
-	printf("\nUSER:>>%s<<\n", gfp.user.c_str());
-	printf("\nREPO:>>%s<<\n", gfp.repo.c_str());
 
 	std::shared_ptr<github_fs::fs_node> node;
 	int res;
