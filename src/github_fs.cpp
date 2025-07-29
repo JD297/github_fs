@@ -297,7 +297,7 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 					fs_file_node->st->st_mode = S_IFREG | 0444;
 					fs_file_node->st->st_blksize = 512;
 					fs_file_node->st->st_nlink = 1;
-					//fs_file_node->st->st_size = item["size"].get<off_t>(); // TODO
+					fs_file_node->st->st_size = item["size"].get<off_t>();
 				}
 
 				(*fs_branch_node->nodes)[item["name"].get_ref<const std::string&>()] = fs_file_node;
@@ -364,7 +364,7 @@ int github_fs_get_node(const char *path, std::shared_ptr<github_fs::fs_node> *no
 					fs_file_node->st->st_mode = S_IFREG | 0444;
 					fs_file_node->st->st_blksize = 512;
 					fs_file_node->st->st_nlink = 1;
-					//fs_file_node->st->st_size = item["size"].get<off_t>(); // TODO
+					fs_file_node->st->st_size = item["size"].get<off_t>();
 				}
 
 				(*fs_path_node->nodes)[item["name"].get_ref<const std::string&>()] = fs_file_node;
