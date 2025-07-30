@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <string>
 #include <iostream>
@@ -30,6 +31,8 @@ namespace github_fs
 }
 
 std::shared_ptr<github_fs::fs_node> fs_root_node;
+
+std::map<std::string, FILE*> fs_path_data;
 
 class github_fs_path
 {
@@ -81,6 +84,14 @@ namespace github_fs::api
 	typedef struct response {
 		long code;
 		nlohmann::json json;
+	} response;
+}
+
+namespace github_fs::raw
+{
+	typedef struct response {
+		long code;
+		FILE* file;
 	} response;
 }
 
@@ -166,6 +177,34 @@ github_fs::api::response github_api_repos_contents(github_fs_path gfp)
 	rewind(file);
 
 	res.json = nlohmann::json::parse(file);
+
+	return res;
+}
+
+github_fs::raw::response raw_github_user_content(github_fs_path gfp)
+{
+	github_fs::raw::response res;
+
+	res.file = tmpfile();
+
+	CURL *curl = curl_easy_init();
+
+	std::string url = "https://raw.githubusercontent.com/" + gfp.user + "/" + gfp.repo + "/" + gfp.branch + "/" + gfp.path;
+
+	std::cout << std::endl << url << std::endl;
+
+	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "github_fs");
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, res.file);
+
+	curl_easy_perform(curl);
+
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res.code);
+
+	curl_easy_cleanup(curl);
+
+	rewind(res.file);
 
 	return res;
 }
@@ -436,6 +475,66 @@ int fs_getattr(const char *path, struct stat *st)
 	return 0;
 }
 
+int fs_open(const char *path, struct fuse_file_info *ffi)
+{
+	github_fs_path gfp(path);
+
+	std::shared_ptr<github_fs::fs_node> fs_user_node = (*fs_root_node->nodes)[std::string(gfp.user)];
+	std::shared_ptr<github_fs::fs_node> fs_repo_node = (*fs_user_node->nodes)[std::string(gfp.repo)];
+	std::shared_ptr<github_fs::fs_node> fs_branch_node = (*fs_repo_node->nodes)[std::string(gfp.branch)];
+
+	std::shared_ptr<github_fs::fs_node> fs_previous_path_node = fs_branch_node;
+	std::shared_ptr<github_fs::fs_node> fs_path_node;
+
+	std::filesystem::path github_path(gfp.path);
+
+	for (auto part = github_path.begin(); part != github_path.end();) {
+		fs_path_node = (*fs_previous_path_node->nodes)[part->string()];
+
+		if (++part != github_path.end()) {
+			fs_previous_path_node = fs_path_node;
+		}
+	}
+
+	if (fs_path_node->st->st_nlink == 0) {
+		return -ENOENT;
+	}
+
+	if ((ffi->flags & 3) != O_RDONLY) {
+		return -EACCES;
+	}
+
+	if (fs_path_data.find(std::string(path)) != fs_path_data.end()) {
+		return 0;
+	}
+
+	github_fs::raw::response res = raw_github_user_content(gfp);
+
+	if (res.code >= 300) {
+		std::cout  << std::endl << "API ERROR RAW CONTENT: [" << res.code << "]" << std::endl;
+	
+		return -ENOENT;
+	}
+
+	fs_path_data[std::string(path)] = res.file;
+
+	return 0;
+}
+
+int fs_read(const char *path, char *buf, size_t size, off_t off, struct fuse_file_info *ffi)
+{
+	(void)ffi;
+
+	int fd = fileno(fs_path_data[std::string(path)]);
+	ssize_t nread;
+
+	if ((nread = pread(fd, buf, size, off)) == -1) {
+		return errno;
+	}
+
+	return (int)nread;
+}
+
 struct fuse_operations fsops;
 
 int main(int argc, char **argv)
@@ -452,6 +551,8 @@ int main(int argc, char **argv)
 
 	fsops.getattr = fs_getattr;
 	fsops.readdir = fs_readdir;
+	fsops.open = fs_open;
+	fsops.read = fs_read;
 
 	return fuse_main(argc, argv, &fsops, NULL);
 }
